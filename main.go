@@ -4,20 +4,15 @@ package main
 import (
 	"log"
 	"os"
-	"os/user"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/gocolly/colly/v2"
 	"kernel.org/pub/linux/libs/security/libcap/cap"
-
-	//#include <unistd.h>
-	//#include <errno.h>
-	"C"
 )
 
+// Article holds the scraped data from the website
 type Article struct {
 	img       string
 	title     string
@@ -30,6 +25,7 @@ func truncateToDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
+// Downloads the recent articles from the SUZ web
 func scrapeWeb(domain string) (results []Article) {
 	c := colly.NewCollector()
 
@@ -46,6 +42,7 @@ func scrapeWeb(domain string) (results []Article) {
 		published, err := time.Parse(layout, e.ChildText(".content .date"))
 
 		if err != nil {
+			log.Println("Failed to parse date from the articles page!", err)
 			return
 		}
 		published = truncateToDay(published)
@@ -57,6 +54,7 @@ func scrapeWeb(domain string) (results []Article) {
 
 	c.Visit("https://" + domain + "/cz/aktuality")
 
+	// reverse the article order
 	for i, j := 0, len(results)-1; i < j; i, j = i+1, j-1 {
 		results[i], results[j] = results[j], results[i]
 	}
@@ -64,33 +62,22 @@ func scrapeWeb(domain string) (results []Article) {
 	return results
 }
 
-func dropPriv() {
-	if syscall.Getuid() != 0 {
-		return
-	}
-
-	log.Println("Running as root, downgrading to user nobody")
-	user, err := user.Lookup("nobody")
-	if err != nil {
-		log.Fatalln("User not found or other error:", err)
-	}
-	uid, _ := strconv.ParseInt(user.Uid, 10, 32)
-	gid, _ := strconv.ParseInt(user.Gid, 10, 32)
-	cerr, errno := C.setgid(C.__gid_t(gid))
-	if cerr != 0 {
-		log.Fatalln("Unable to set GID due to error:", errno)
-	}
-	cerr, errno = C.setuid(C.__uid_t(uid))
-	if cerr != 0 {
-		log.Fatalln("Unable to set UID due to error:", errno)
-	}
-}
-
 // Taken from the official GoLang caps library
 func dropCaps() {
 	// Read and display the capabilities of the running process
 	// c := cap.GetProc()
 	// log.Printf("this process has these caps:", c)
+
+	nobody := 65534
+	groups := []int{65534}
+	err := cap.SetGroups(groups[0])
+	if err != nil {
+		log.Fatalln("Failed to drop root")
+	}
+	err = cap.SetUID(nobody)
+	if err != nil {
+		log.Fatalln("Failed to drop root")
+	}
 
 	empty := cap.NewSet()
 	if err := empty.SetProc(); err != nil {
@@ -104,34 +91,38 @@ func dropCaps() {
 	}
 }
 
-const ENV_AUTH_TOKEN = "SUZ_AUTH_TOKEN"
-const ENV_CHANNEL_ID = "SUZ_CHANNEL_ID"
-const ENV_SLEEP_MINS = "SUZ_SLEEP_MINS"
+// env var keys
+const envAuthToken = "SUZ_AUTH_TOKEN"
+const envChannelID = "SUZ_CHANNEL_ID"
+const envSleepMins = "SUZ_SLEEP_MINS"
 
 func main() {
-	dropPriv()
 	dropCaps()
 
-	token := os.Getenv(ENV_AUTH_TOKEN)
-	channelId := os.Getenv(ENV_CHANNEL_ID)
-	sleepMins, err := strconv.ParseInt(os.Getenv(ENV_SLEEP_MINS), 10, 32)
-	if len(token) == 0 || len(channelId) == 0 || err != nil {
+	// load env vars
+	token := os.Getenv(envAuthToken)
+	channelID := os.Getenv(envChannelID)
+	sleepMins, err := strconv.ParseInt(os.Getenv(envSleepMins), 10, 32)
+	if len(token) == 0 || len(channelID) == 0 || err != nil {
 		log.Fatalln("Failed to read/parse all the env vars.")
 	}
 
-	os.Setenv(ENV_AUTH_TOKEN, "")
-	os.Setenv(ENV_CHANNEL_ID, "")
-	os.Setenv(ENV_SLEEP_MINS, "")
+	os.Setenv(envAuthToken, "")
+	os.Setenv(envChannelID, "")
+	os.Setenv(envSleepMins, "")
 
+	// main loop
 	for {
 		log.Println("Running...")
-		process(token, channelId)
+		process(token, channelID)
+
 		log.Println("Sleeping for", sleepMins, "minutes")
 		time.Sleep(time.Minute * time.Duration(sleepMins))
 	}
 }
 
-func process(token string, channelId string) {
+// Fetches articles, opens web-socket to discord, fetches old messages and sends the new ones if possible
+func process(token string, channelID string) {
 	articles := scrapeWeb("suz.cvut.cz")
 	log.Println("Loaded", len(articles), "articles.")
 
@@ -145,23 +136,24 @@ func process(token string, channelId string) {
 		log.Fatalln("Failed to open socket.")
 	}
 
-	messages, err := session.ChannelMessages(channelId, 20, "", "", "")
+	messages, err := session.ChannelMessages(channelID, 20, "", "", "")
 	if err != nil {
 		log.Fatalln("Failed to read old messages.")
 	}
-	log.Println("Read", len(messages), "from the channel.")
+	log.Println("Read", len(messages), "messages from the channel.")
 
 	sendFrom := lastMessageTimestamp(messages)
 
 	for _, article := range articles {
 		if article.published.After(sendFrom) {
 			log.Println("Sending article", article.title)
-			sendArticle(session, channelId, article)
+			sendArticle(session, channelID, article)
 		}
 	}
 	session.Close()
 }
 
+// Finds the most recent article sent by me
 func lastMessageTimestamp(messages []*discordgo.Message) (result time.Time) {
 	result = time.Unix(0, 0)
 
@@ -181,7 +173,8 @@ func lastMessageTimestamp(messages []*discordgo.Message) (result time.Time) {
 	return result
 }
 
-func sendArticle(session *discordgo.Session, channelId string, article Article) {
+// Creates a post in the channel
+func sendArticle(session *discordgo.Session, channelID string, article Article) {
 	image := discordgo.MessageEmbedThumbnail{
 		URL:      article.img,
 		ProxyURL: "",
@@ -216,7 +209,7 @@ func sendArticle(session *discordgo.Session, channelId string, article Article) 
 		StickerIDs:      []string{},
 		Flags:           flags,
 	}
-	_, err := session.ChannelMessageSendComplex(channelId, &message)
+	_, err := session.ChannelMessageSendComplex(channelID, &message)
 	if err != nil {
 		log.Println("Failed to send an article:", err)
 	}
