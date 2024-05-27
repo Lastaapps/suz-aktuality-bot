@@ -68,15 +68,17 @@ func dropCaps() {
 	// c := cap.GetProc()
 	// log.Printf("this process has these caps:", c)
 
-	nobody := 65534
-	groups := []int{65534}
-	err := cap.SetGroups(groups[0])
-	if err != nil {
-		log.Fatalln("Failed to drop root")
-	}
-	err = cap.SetUID(nobody)
-	if err != nil {
-		log.Fatalln("Failed to drop root")
+	if os.Geteuid() == 0 {
+		nobody := 65534
+		groups := []int{65534}
+		err := cap.SetGroups(groups[0])
+		if err != nil {
+			log.Fatalln("Failed to drop root")
+		}
+		err = cap.SetUID(nobody)
+		if err != nil {
+			log.Fatalln("Failed to drop root")
+		}
 	}
 
 	empty := cap.NewSet()
