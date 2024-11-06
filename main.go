@@ -93,6 +93,7 @@ func dropCaps() {
 const envAuthToken = "SUZ_AUTH_TOKEN"
 const envChannelID = "SUZ_CHANNEL_ID"
 const envSleepMins = "SUZ_SLEEP_MINS"
+const SUZ_DOMAIN = "suz.cvut.cz"
 
 func main() {
 	dropCaps()
@@ -121,7 +122,7 @@ func main() {
 
 // Fetches articles, opens web-socket to discord, fetches old messages and sends the new ones if possible
 func process(token string, channelID string) {
-	articles := scrapeWeb("suz.cvut.cz")
+	articles := scrapeWeb(SUZ_DOMAIN)
 	log.Println("Loaded", len(articles), "articles.")
 
 	session, err := discordgo.New("Bot " + token)
@@ -146,7 +147,7 @@ func process(token string, channelID string) {
 	for _, article := range articles {
 		if !slices.Contains(lastUrls, article.link) {
 			log.Println("Sending article", article.title)
-			url, err := archiveWebPage(article.link)
+			url, err := archiveArticle(article.link)
 			if err != nil {
 				log.Println("Failed to create an archive link for", article.title)
 				continue
@@ -206,6 +207,30 @@ func lastMessageTimestamp(messages []*discordgo.Message) (result time.Time) {
 	}
 
 	return result
+}
+
+func archiveArticle(articleUrl string) (string, error) {
+	c := colly.NewCollector()
+	domain := SUZ_DOMAIN
+
+	// Find and visit all links
+	c.OnHTML(".block-suzcvut-content .body a", func(e *colly.HTMLElement) {
+		link := "https://" + domain + e.Attr("href")
+		log.Println("Backing up an attached file", link)
+		_, err := archiveWebPage(link)
+		if err != nil {
+			log.Println("Failed to backup the file")
+		}
+	})
+
+	c.Visit(articleUrl)
+
+	url, err := archiveWebPage(articleUrl)
+	if err != nil {
+		log.Println("Failed to backup the article")
+	}
+
+	return url, nil
 }
 
 // Creates a post in the channel
