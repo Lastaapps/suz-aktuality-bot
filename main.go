@@ -20,7 +20,7 @@ type Article struct {
 	img   string
 	title string
 	body  string
-	link  string
+	url   string
 	label string
 }
 
@@ -135,7 +135,7 @@ func process(token string, channelID string) {
 		log.Fatalln("Failed to open socket.")
 	}
 
-	messages, err := session.ChannelMessages(channelID, 20, "", "", "")
+	messages, err := session.ChannelMessages(channelID, 32, "", "", "")
 	if err != nil {
 		log.Fatalln("Failed to read old messages.")
 	}
@@ -145,9 +145,9 @@ func process(token string, channelID string) {
 
 	anySent := false
 	for _, article := range articles {
-		if !slices.Contains(lastUrls, article.link) {
+		if !slices.Contains(lastUrls, article.url) {
 			log.Println("Sending article", article.title)
-			url, err := archiveArticle(article.link)
+			url, err := archiveArticle(article.url)
 			if err != nil {
 				log.Println("Failed to create an archive link for", article.title)
 				continue
@@ -174,6 +174,7 @@ func lastPublishedUrls(messages []*discordgo.Message) []string {
 
 	for _, message := range messages {
 		if !message.Author.Bot || len(message.Embeds) == 0 {
+			log.Println("Found a suspicious message from", message.Author.Username)
 			continue
 		}
 		theEmbed := message.Embeds[0]
@@ -215,7 +216,11 @@ func archiveArticle(articleUrl string) (string, error) {
 
 	// Find and visit all links
 	c.OnHTML(".block-suzcvut-content .body a", func(e *colly.HTMLElement) {
-		link := "https://" + domain + e.Attr("href")
+		link := e.Attr("href")
+		// for the local content
+		if !strings.HasPrefix(link, "http") {
+			link = "https://" + domain + link
+		}
 		log.Println("Backing up an attached file", link)
 		_, err := archiveWebPage(link)
 		if err != nil {
@@ -234,7 +239,9 @@ func archiveArticle(articleUrl string) (string, error) {
 }
 
 // Creates a post in the channel
-func sendArticle(session *discordgo.Session, channelID string, article Article, url string) {
+func sendArticle(session *discordgo.Session, channelID string, article Article, archiveUrl string) {
+	bodyWithArchive := article.body + "\n\n[**Archiv**](" + archiveUrl + ")"
+
 	image := discordgo.MessageEmbedThumbnail{
 		URL:      article.img,
 		ProxyURL: "",
@@ -242,10 +249,12 @@ func sendArticle(session *discordgo.Session, channelID string, article Article, 
 		Height:   252,
 	}
 	embed := discordgo.MessageEmbed{
-		URL:         url, // article.link,
-		Type:        discordgo.EmbedTypeArticle,
-		Title:       article.title,
-		Description: article.body,
+		URL: article.url, // article.link,
+		// URL:         url,
+		Type:  discordgo.EmbedTypeArticle,
+		Title: article.title,
+		// Description: article.body,
+		Description: bodyWithArchive,
 		// Timestamp:   article.published.Format(time.RFC3339),
 		Color:     getColorForString(article.label),
 		Footer:    nil,
@@ -256,6 +265,7 @@ func sendArticle(session *discordgo.Session, channelID string, article Article, 
 		Author:    nil,
 		Fields:    []*discordgo.MessageEmbedField{
 			// {Name: "Kategorie", Value: article.label},
+			// {Name: "Archiv", Value: archiveUrl},
 		},
 	}
 
