@@ -221,7 +221,6 @@ func archiveArticle(articleUrl string) (string, error) {
 		if !strings.HasPrefix(link, "http") {
 			link = "https://" + domain + link
 		}
-		log.Println("Backing up an attached file", link)
 		_, err := archiveWebPage(link)
 		if err != nil {
 			log.Println("Failed to backup the file")
@@ -281,9 +280,16 @@ func sendArticle(session *discordgo.Session, channelID string, article Article, 
 		StickerIDs:      []string{},
 		Flags:           flags,
 	}
-	_, err := session.ChannelMessageSendComplex(channelID, &message)
+	dcMessage, err := session.ChannelMessageSendComplex(channelID, &message)
 	if err != nil {
 		log.Println("Failed to send an article:", err)
+		return
+	}
+	// CrossPosts the message of related channels
+	_, err = session.ChannelMessageCrosspost(dcMessage.ChannelID, dcMessage.ID)
+	if err != nil {
+		log.Println("Failed to publish an article:", err)
+		return
 	}
 }
 
@@ -306,12 +312,17 @@ func getColorForString(str string) int {
 }
 
 func archiveWebPage(url string) (string, error) {
+	log.Println("Archiving URL:", url)
+
 	if !strings.HasPrefix(url, "http") {
 		log.Fatalln("Urls don't have the http(s) prefix, it's gonna be \"hard\" to work with them later.")
 	}
+	// log.Println("curl", "-I", "\"https://web.archive.org/save/"+url+"\"")
 	_, err := http.Get("https://web.archive.org/save/" + url)
 	if err != nil {
 		return "", nil
 	}
-	return "https://web.archive.org/web/" + url, nil
+	archiveURL := "https://web.archive.org/web/" + url
+	log.Println("Archive successful:", archiveURL)
+	return archiveURL, nil
 }
