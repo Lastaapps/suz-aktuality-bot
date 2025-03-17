@@ -1,7 +1,7 @@
 # SUZ Aktuality
 
-This script scrapes news from [SUZ CTU](https://www.suz.cvut.cz/cz/aktuality)
-and post's then to our Discord server (so it is a bot).
+This program scrapes news from [SUZ CTU](https://www.suz.cvut.cz/cz/aktuality)
+and posts then to our Discord server as a bot.
 
 ## Resources
 
